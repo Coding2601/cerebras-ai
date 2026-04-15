@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: bhagavad-gita-rag-api
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: CEREBRAS_API_KEY
+        sync: false
+      - key: EMBEDDING_MODEL
+        value: all-MiniLM-L6-v2
+      - key: MODEL_NAME
+        value: llama3.1-8b
+    plan: starter
