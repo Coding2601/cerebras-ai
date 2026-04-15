@@ -2,8 +2,10 @@ services:
   - type: web
     name: bhagavad-gita-rag-api
     runtime: python
-    buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    buildCommand: |
+      pip install -r requirements.txt
+    startCommand: |
+      uvicorn main:app --host 0.0.0.0 --port ${PORT:-10000}
     envVars:
       - key: CEREBRAS_API_KEY
         sync: false
@@ -11,4 +13,6 @@ services:
         value: all-MiniLM-L6-v2
       - key: MODEL_NAME
         value: llama3.1-8b
+      - key: PYTHONUNBUFFERED
+        value: "1"
     plan: starter
