@@ -1,5 +1,6 @@
 import os
 import logging
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -15,6 +16,7 @@ logger = logging.getLogger(__name__)
 embedder = None
 vector_db = None
 llm = None
+initialization_task = None
 
 def get_base_path():
     """Get the base path for the application (works for both local and deployment)."""
@@ -64,17 +66,46 @@ def init_singletons():
         logger.error(f"Failed to initialize singletons: {e}")
         raise
 
+async def ensure_initialized():
+    """Ensure singletons are initialized, waiting for background task if needed."""
+    global embedder, vector_db, llm, initialization_task
+    
+    if embedder is not None:
+        return True
+    
+    # If background task is running, wait for it
+    if initialization_task is not None and not initialization_task.done():
+        logger.info("Waiting for background initialization...")
+        try:
+            await initialization_task
+        except Exception as e:
+            logger.error(f"Background initialization failed: {e}")
+            return False
+    
+    # If still not initialized, do it now
+    if embedder is None:
+        loop = asyncio.get_event_loop()
+        try:
+            await loop.run_in_executor(None, init_singletons)
+        except Exception as e:
+            logger.error(f"Initialization failed: {e}")
+            return False
+    
+    return True
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Lifespan context manager for startup/shutdown events."""
-    # Startup
+    """Lifespan context manager - start server immediately, init in background."""
+    global initialization_task
+    
     logger.info("Starting up...")
-    try:
-        init_singletons()
-        logger.info("Startup complete")
-    except Exception as e:
-        logger.error(f"Startup failed: {e}")
-        # Don't raise - let the app start so we can see errors in health checks
+    # Start initialization in background so server can bind port immediately
+    async def _background_init():
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, init_singletons)
+    
+    initialization_task = asyncio.create_task(_background_init())
+    logger.info("Server started, models loading in background...")
     
     yield
     
@@ -122,10 +153,10 @@ def health_check():
 
 # ---------------------- SEMANTIC SEARCH API ----------------------
 @app.post("/search", response_model=SearchResponse)
-def semantic_search(request: SearchRequest):
+async def semantic_search(request: SearchRequest):
     try:
-        init_singletons()
-        if embedder is None or vector_db is None:
+        initialized = await ensure_initialized()
+        if not initialized or embedder is None or vector_db is None:
             raise HTTPException(status_code=503, detail="Service initializing, please retry")
             
         query_vector = embedder.get_embedding(request.query).astype("float32")
@@ -146,10 +177,10 @@ def semantic_search(request: SearchRequest):
 
 # ---------------------- CHAT API ----------------------
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+async def chat(request: ChatRequest):
     try:
-        init_singletons()
-        if embedder is None or vector_db is None or llm is None:
+        initialized = await ensure_initialized()
+        if not initialized or embedder is None or vector_db is None or llm is None:
             raise HTTPException(status_code=503, detail="Service initializing, please retry")
             
         query_vector = embedder.get_embedding(request.prompt).astype("float32")
